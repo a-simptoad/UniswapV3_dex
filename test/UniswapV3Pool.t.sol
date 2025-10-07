@@ -57,17 +57,47 @@ contract UniswapV3PoolTest is Test, IUniswapV3MintCallback{
         token1.mint(address(this), params.usdcBalance);
 
         pool = new UniswapV3Pool(address(token0), address(token1), params.currentSqrtP, params.currentTick);
+        shouldTransferInCallback = params.shouldTransferInCallback;
 
         if(params.mintLiquidity) {
             (poolBalance0, poolBalance1) = pool.mint(address(this), params.lowerTick, params.upperTick, params.liquidity);
         }
 
-        shouldTransferInCallback = params.shouldTransferInCallback;
+        uint256 expectedAmount0 = 0.998976618347425280 ether;
+        uint256 expectedAmount1 = 5000 ether;
+        assertEq(poolBalance0, expectedAmount0, "Invalid token0 Amount Minted");
+        assertEq(poolBalance1, expectedAmount1, "Invalid token1 Amount Minted");
+
+        assertEq(token0.balanceOf(address(pool)), poolBalance0);
+        assertEq(token1.balanceOf(address(pool)), poolBalance1);
+
+        (bool lowerInitialized, uint128 lowerTickLiquidity) = pool.ticks(params.lowerTick);
+        (bool upperInitialized, uint128 upperTickLiquidity) = pool.ticks(params.upperTick);
+        assertTrue(lowerInitialized);
+        assertTrue(upperInitialized);
+        assertEq(lowerTickLiquidity, params.liquidity);
+        assertEq(upperTickLiquidity, params.liquidity);
+
+        bytes32 PositionKey = keccak256(abi.encodePacked(address(this), params.lowerTick, params.upperTick));
+        uint128 posLiquidity = pool.positions(PositionKey);
+        assertEq(posLiquidity, params.liquidity);
+
+        (uint160 sqrtPriceX96, int24 tick) = pool.slot0();
+        assertEq(
+            sqrtPriceX96,
+            5602277097478614198912276234240,
+            "invalid current sqrtP"
+        );
+        assertEq(tick, 85176, "invalid current tick");
+        assertEq(
+            pool.liquidity(),
+            1517882343751509868544,
+            "invalid current liquidity"
+        );
     }
 
     function uniswapV3MintCallback(uint256 amount0, uint256 amount1) external override{
         if(shouldTransferInCallback) {
-            console.log("This callback function is called");
             token0.transfer(msg.sender, amount0);
             token1.transfer(msg.sender, amount1);
         }
