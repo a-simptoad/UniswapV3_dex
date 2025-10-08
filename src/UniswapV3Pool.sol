@@ -5,6 +5,7 @@ import {Tick} from "src/libs/Tick.sol";
 import {Position} from "src/libs/Position.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IUniswapV3MintCallback} from "src/interfaces/IUniswapV3MintCallback.sol";
+import {IUniswapV3SwapCallback} from "src/interfaces/IUniswapV3SwapCallback.sol";
 
 contract UniswapV3Pool {
     // Errors
@@ -48,6 +49,16 @@ contract UniswapV3Pool {
         uint128 amount,
         uint256 amount0,
         uint256 amount1
+    );
+
+    event Swap(
+        address caller,
+        address recipient,
+        int256 amount0,
+        int256 amount1,
+        uint160 sqrtPriceX96,
+        uint128 liquidity,
+        int24 tick
     );
 
     constructor(address _token0, address _token1, uint160 sqrtPriceX96, int24 _tick) {
@@ -105,6 +116,36 @@ contract UniswapV3Pool {
         if (amount1 > 0 && balance1Before + amount1 > balance1()) revert Pool__InsufficientInputAmount();
 
         emit Mint(msg.sender, owner, lowerTick, upperTick, amount, amount0, amount1);
+    }
+
+    function swap(address recipient) external returns(int256 amount0, int256 amount1) {
+        amount0 = -0.008396714242162444 ether; // contract pool swaps this amount to user
+        amount1 = 42 ether; // User pays 45 usdc to the contract pool
+
+        int24 nextTick = 85184;
+        uint160 nextPrice = 5604469350942327889444743441197;
+
+        (slot0.tick , slot0.sqrtPriceX96) = (nextTick, nextPrice);
+
+        // Contract sends token to the recipient and lets caller transfer the input
+
+        IERC20(token0).transfer(recipient, uint256(-amount0));
+
+        uint256 balance1Before = balance1();
+        IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(amount0, amount1);
+        if (balance1Before + uint256(amount1) < balance1()){
+            revert Pool__InsufficientInputAmount();
+        }
+
+        emit Swap(
+            msg.sender,
+            recipient,
+            amount0,
+            amount1,
+            slot0.sqrtPriceX96,
+            liquidity,
+            slot0.tick
+        );
     }
 
     function balance0() internal view returns (uint256 balance) {
