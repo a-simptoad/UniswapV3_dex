@@ -32,6 +32,12 @@ contract UniswapV3Pool {
         int24 tick;
     }
 
+    struct CallbackData {
+        address token0;
+        address token1;
+        address payer;
+    }
+
     // Earlier defined variables were constants hence don't take the initial memory slot
     // Hence the initial slot is reserved for keeping the price to reduce computation and gas fees
     Slot0 public slot0;
@@ -74,14 +80,14 @@ contract UniswapV3Pool {
      * @param lowerTick Lower bound of the price range
      * @param upperTick Upper bound of the price range
      * @param amount Amount of liquidty owner provides
-     * 
+     *
      * @return amount0 Amount of token0 that LP provides
      * @return amount1 Amount of token1 that LP provides
-     * 
+     *
      * @dev Here, User specifies Liquidty and not actual token amounts as input; The contract only implements core logic
      * and hence later on a helper contract will convert token amounts to liquidity before calling this function.
      */
-    function mint(address owner, int24 lowerTick, int24 upperTick, uint128 amount)
+    function mint(address owner, int24 lowerTick, int24 upperTick, uint128 amount, bytes calldata data)
         external
         returns (uint256 amount0, uint256 amount1)
     {
@@ -111,41 +117,33 @@ contract UniswapV3Pool {
         if (amount1 > 0) balance1Before = balance1();
         /// @notice We call the uniswapV3MintCallback method on the caller (Router Contract)
         /// @dev Expected that the caller is a contract and implements the uniswapV3MintCallback method and transfers tokens to this Pool contract
-        IUniswapV3MintCallback(msg.sender).uniswapV3MintCallback(amount0, amount1);
+        IUniswapV3MintCallback(msg.sender).uniswapV3MintCallback(amount0, amount1, data);
         if (amount0 > 0 && balance0Before + amount0 > balance0()) revert Pool__InsufficientInputAmount();
         if (amount1 > 0 && balance1Before + amount1 > balance1()) revert Pool__InsufficientInputAmount();
 
         emit Mint(msg.sender, owner, lowerTick, upperTick, amount, amount0, amount1);
     }
 
-    function swap(address recipient) external returns(int256 amount0, int256 amount1) {
+    function swap(address recipient, bytes calldata data) external returns (int256 amount0, int256 amount1) {
         amount0 = -0.008396714242162444 ether; // contract pool swaps this amount to user
         amount1 = 42 ether; // User pays 45 usdc to the contract pool
 
         int24 nextTick = 85184;
         uint160 nextPrice = 5604469350942327889444743441197;
 
-        (slot0.tick , slot0.sqrtPriceX96) = (nextTick, nextPrice);
+        (slot0.tick, slot0.sqrtPriceX96) = (nextTick, nextPrice);
 
         // Contract sends token to the recipient and lets caller transfer the input
 
         IERC20(token0).transfer(recipient, uint256(-amount0));
 
         uint256 balance1Before = balance1();
-        IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(amount0, amount1);
-        if (balance1Before + uint256(amount1) < balance1()){
+        IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
+        if (balance1Before + uint256(amount1) < balance1()) {
             revert Pool__InsufficientInputAmount();
         }
 
-        emit Swap(
-            msg.sender,
-            recipient,
-            amount0,
-            amount1,
-            slot0.sqrtPriceX96,
-            liquidity,
-            slot0.tick
-        );
+        emit Swap(msg.sender, recipient, amount0, amount1, slot0.sqrtPriceX96, liquidity, slot0.tick);
     }
 
     function balance0() internal view returns (uint256 balance) {

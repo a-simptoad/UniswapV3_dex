@@ -7,7 +7,7 @@ library Tick {
         uint128 liquidity; // default -> 0
     }
 
-    /** 
+    /**
      *
      * @param self Refers to the mapping defined in the calling contract, Hence used the keyword storage.
      * @param tick tick to initialize
