@@ -16,6 +16,7 @@ contract UniswapV3Pool {
     using Tick for mapping(int24 => Tick.Info);
     using Position for mapping(bytes32 => Position.Info);
     using Position for Position.Info;
+    using TickBitmap for mapping(int16 => uint256);
 
     // constant and immutable variables are stored in contract's bytecode and hence takes less gas fees to read
     int24 internal constant MIN_TICK = -887272;
@@ -46,6 +47,8 @@ contract UniswapV3Pool {
 
     mapping(int24 => Tick.Info) public ticks;
     mapping(bytes32 => Position.Info) public positions;
+    // Takes the position of the word and gives out the word
+    mapping(int16 => uint256) public tickBitmap;
 
     event Mint(
         address caller,
@@ -146,11 +149,60 @@ contract UniswapV3Pool {
         emit Swap(msg.sender, recipient, amount0, amount1, slot0.sqrtPriceX96, liquidity, slot0.tick);
     }
 
+    function flipTick(mapping(int16 => uint256) storage self, int24 tick, int24 tickSpacing) internal {
+        require(tick % tickSpacing == 0);
+        // Getting the word position which contains the tick
+        // The bitPos is the position of the tick in the word
+        (int16 wordPos, uint bitPos) = position(tick / tickSpacing);
+        // Mask is a number that has a single flag 1 set at the bit position of the tick
+        // This operator here is the left bit operator which shifts the number 1 left bitPos times. Making the 1 at the bit position of the 256 bit number 1 (0x000000....001)
+        uint256 mask = 1 << bitPos;
+        // Then the XOR operator is applied with the word at the word position and the mask which flips the bit at the bit position.
+        self[wordPos] ^= mask;
+    }
+
+    /// @dev Calculates the next initialized tick -> left one when buying token x in the same same word 
+    /// @param self This is the word mapping or bitmap which contains the words with each bit as the tick index
+    /// @param lte lte is the flag that sets the direction. When true, we’re selling token x and searching for the next initialized tick to the right of the current one. When false, it’s the other way around
+    function nextInitializedTickWithinOneWord(mapping(int16 => uint256) storage self, int24 tick, int24 tickSpacing, bool lte) internal view returns (int24 next, bool initialized) {
+        (int16 wordPos, uint8 bitPos) = position(tick / tickSpacing);
+        if(lte){
+            for(uint256 i = 0; i < 256; i++){
+                bitPos = uint8(uint24((tick + tickSpacing * i) % 256));
+
+                // We need to use the & bitwise operator to check if the flag is 1 at the new bitPos. 
+                uint256 mask = 1 << bitPos; 
+                if((self[wordPos] & mask) == mask) { // bit at bitPos = 1
+                    next = tick + tickSpacing * i;
+                    return (next, true);
+                }
+            }
+        }else{
+            for(uint256 i = 0; i < 256; i++){
+                bitPos = uint8(uint24((tick - tickSpacing * i) % 256));
+
+                // We need to use the & bitwise operator to check if the flag is 1 at the new bitPos. 
+                uint256 mask = 1 << bitPos; 
+                if((self[wordPos] & mask) == mask) { // bit at bitPos = 1
+                    next = tick + tickSpacing * i;
+                    return (next, true);
+                }
+            }
+        }
+        // self[wordPos] gives the word which has 256 ticks as bits.         
+    }
+
     function balance0() internal view returns (uint256 balance) {
         balance = IERC20(token0).balanceOf(address(this));
     }
 
     function balance1() internal view returns (uint256 balance) {
         balance = IERC20(token1).balanceOf(address(this));
+    }
+
+    function position(int24 tick) private pure returns (int16 wordPos, uint8 bitPos) {
+        // wordPos is calculated by the right shift bitwise operator which basically divides the tick by 2**256
+        wordPos = int16(tick >> 8);
+        bitPos = uint8(uint24(tick % 256));
     }
 }
