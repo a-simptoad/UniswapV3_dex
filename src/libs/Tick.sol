@@ -15,7 +15,10 @@ library Tick {
      * @dev tickInfo -> defined as a storage variable as the reference self[tick] is on a storage variable in the calling
      * contract and hence to modify in the parent contract storage is used. Memory is for temp use cases
      */
-    function update(mapping(int24 => Tick.Info) storage self, int24 tick, uint128 liqudityDelta) internal returns(bool flipped){
+    function update(mapping(int24 => Tick.Info) storage self, int24 tick, uint128 liqudityDelta)
+        internal
+        returns (bool flipped)
+    {
         Tick.Info storage tickInfo = self[tick];
         uint128 liquidityBefore = tickInfo.liquidity;
         uint128 liquidityAfter = liquidityBefore + liqudityDelta;

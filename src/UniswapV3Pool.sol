@@ -8,6 +8,7 @@ import {IUniswapV3MintCallback} from "src/interfaces/IUniswapV3MintCallback.sol"
 import {IUniswapV3SwapCallback} from "src/interfaces/IUniswapV3SwapCallback.sol";
 import {TickBitmap} from "src/libs/TickBitmap.sol";
 import {Math} from "src/libs/Math.sol";
+import {SwapMath} from "src/libs/SwapMath.sol";
 
 contract UniswapV3Pool {
     // Errors
@@ -39,6 +40,21 @@ contract UniswapV3Pool {
         address token0;
         address token1;
         address payer;
+    }
+
+    struct SwapState {
+        uint256 amountSpecifiedRemaining;
+        uint256 nextTick;
+        uint160 sqrtPriceX96;
+        int24 tick;
+    }
+
+    struct StepState {
+        uint256 sqrtPriceStartX96;
+        int24 nextTick;
+        uint160 sqrtPriceNextX96;
+        uint256 amountIn;
+        uint256 amountOut;
     }
 
     // Earlier defined variables were constants hence don't take the initial memory slot
@@ -106,10 +122,10 @@ contract UniswapV3Pool {
         bool flippedLower = ticks.update(lowerTick, amount);
         bool flippedUpper = ticks.update(upperTick, amount);
 
-        if(flippedLower) {
+        if (flippedLower) {
             tickBitmap.flipTick(lowerTick, 1);
         }
-        if(flippedUpper) {
+        if (flippedUpper) {
             tickBitmap.flipTick(upperTick, 1);
         }
 
@@ -141,24 +157,90 @@ contract UniswapV3Pool {
         emit Mint(msg.sender, owner, lowerTick, upperTick, amount, amount0, amount1);
     }
 
-    function swap(address recipient, bytes calldata data) external returns (int256 amount0, int256 amount1) {
-        amount0 = -0.008396714242162444 ether; // contract pool swaps this amount to user
-        amount1 = 42 ether; // User pays 45 usdc to the contract pool
+    /**
+     * @notice Swap function swaps token0 and token1
+     * @param recipient Address of the user who recieves the output tokens
+     * @param zeroForOne swap direction flag
+     * @param amountSpecified amount of tokens user wants to sell
+     * @param data
+     * @return amount0 amount of token0 swapped
+     * @return amount1 amount of token1 swapped
+     */
+    function swap(address recipient, bool zeroForOne, uint256 amountSpecified, bytes calldata data)
+        external
+        returns (int256 amount0, int256 amount1)
+    {
+        // amount0 = -0.008396714242162444 ether; // contract pool swaps this amount to user
+        // amount1 = 42 ether; // User pays 45 usdc to the contract pool
 
-        int24 nextTick = 85184;
-        uint160 nextPrice = 5604469350942327889444743441197;
+        // int24 nextTick = 85184;
+        // uint160 nextPrice = 5604469350942327889444743441197;
 
-        (slot0.tick, slot0.sqrtPriceX96) = (nextTick, nextPrice);
+        // (slot0.tick, slot0.sqrtPriceX96) = (nextTick, nextPrice);
+
+        Slot0 memory slot0_ = slot0;
+
+        SwapState memory state = SwapState({
+            amountSpecifiedRemaining: amountSpecified,
+            amountCalculated: 0,
+            sqrtPriceX96: slot0_.sqrtPriceX96,
+            tick: slot0_.tick
+        });
+
+        while (state.amountSpecifiedRemaining > 0) {
+            StepState memory step;
+
+            step.sqrtPriceStartX96 = state.sqrtPriceX96;
+
+            (step.nextTick,) = tickBitmap.nextInitializedTickWithinOneWord(state.tick, 1, zeroForOne);
+
+            step.sqrtPriceNextX96 = TickMath.getSqrtRatioAtTick(step.nextTick);
+
+            (state.sqrtPriceX96, step.amountIn, step.amountOut) = SwapMath.computeSwapStep(
+                state.sqrtPriceX96,
+                step.sqrtPriceNextX96,
+                liquidity, // Active liquidity - All the liquidity which falls in the price range of the current price
+                state.amountSpecifiedRemaining
+            );
+
+            state.amountSpecifiedRemaining -= step.amountIn;
+            state.amountCalculated += step.amountOut;
+            state.tick = TickMath.getTickAtSqrtRatio(state.sqrtPriceX96);
+        }
+
+        if (state.tick != slot0_.tick) {
+            (slot0.sqrtPriceX96, slot0.tick) = (state.sqrtPriceX96, state.tick);
+        }
+
+        (amount0, amount1) = zeroForOne
+            ? (int256(amountSpecified - state.amountSpecifiedRemaining), -int256(state.amountCalculated))
+            : (-int256(state.amountCalculated), int256(amountSpecified - state.amountSpecifiedRemaining));
 
         // Contract sends token to the recipient and lets caller transfer the input
 
-        IERC20(token0).transfer(recipient, uint256(-amount0));
+        if (zeroForOne) {
+            IERC20(token1).transfer(recipient, uint256(-amount1));
 
-        uint256 balance1Before = balance1();
-        IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
-        if (balance1Before + uint256(amount1) < balance1()) {
-            revert Pool__InsufficientInputAmount();
+            uint256 balance0Before = balance0();
+            IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
+
+            if (balance0Before + uint256(amount0) > balance0()) revert Pool__InsufficientInputAmount();
+        } else {
+            IERC20(token0).transfer(recipient, uint256(-amount0));
+
+            uint256 balance1Before = balance1();
+            IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
+
+            if (balance1Before + uint256(amount1) > balance1()) revert Pool__InsufficientInputAmount();
         }
+
+        // IERC20(token0).transfer(recipient, uint256(-amount0));
+
+        // uint256 balance1Before = balance1();
+        // IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
+        // if (balance1Before + uint256(amount1) < balance1()) {
+        //     revert Pool__InsufficientInputAmount();
+        // }
 
         emit Swap(msg.sender, recipient, amount0, amount1, slot0.sqrtPriceX96, liquidity, slot0.tick);
     }

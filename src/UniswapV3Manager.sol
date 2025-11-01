@@ -6,8 +6,7 @@ import {UniswapV3Pool} from "src/UniswapV3Pool.sol";
 import {IUniswapV3MintCallback} from "src/interfaces/IUniswapV3MintCallback.sol";
 import {IUniswapV3SwapCallback} from "src/interfaces/IUniswapV3SwapCallback.sol";
 
-contract UniswapV3Manager is IUniswapV3MintCallback, IUniswapV3SwapCallback{
-
+contract UniswapV3Manager is IUniswapV3MintCallback, IUniswapV3SwapCallback {
     function mint(address pool, int24 lowerTick, int24 upperTick, uint128 liquidity, bytes calldata data) external {
         UniswapV3Pool(pool).mint(msg.sender, lowerTick, upperTick, liquidity, data);
     }

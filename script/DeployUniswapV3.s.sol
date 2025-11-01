@@ -11,6 +11,7 @@ contract DeployUniswapV3 is Script {
     uint256 usdcBalance = 5042 ether;
     int24 currentTick = 85176;
     uint160 currentSqrtP = 5602277097478614198912276234240;
+
     function run() external returns (UniswapV3Pool, UniswapV3Manager) {
         vm.startBroadcast();
         ERC20Mintable token0 = new ERC20Mintable("Wrapped Ether", "WETH", 18);
